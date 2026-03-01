@@ -1,3 +1,4 @@
+import asyncio
 import glob
 from pathlib import Path
 import wx
@@ -106,6 +107,28 @@ def split_interface_name(interface_string: str):
     interface = parts[0]
     interface_name = parts[1] if len(parts) > 1 else None
     return (interface, interface_name)
+
+
+async def async_scan_for_ble_devices():
+    interfaces = []
+    try:
+        # We have to import this from the correct thread. No joke.
+        from bleak import BleakScanner
+
+        devices = await BleakScanner.discover(
+            service_uuids=[constants.BLE_SERVICE_IDENTIFIER]
+        )
+    except:
+        return interfaces
+    for d in devices:
+        interfaces.append((d.name, "BLEISOTP_" + d.address))
+    return interfaces
+
+
+def scan_for_ble_devices(callback):
+    threading.Thread(
+        target=lambda cb: cb(asyncio.run(async_scan_for_ble_devices())), args=[callback]
+    ).start()
 
 
 def get_dlls_from_registry():
@@ -222,6 +245,51 @@ class StminDialog(wx.Dialog):
             self.Close()
 
 
+class VINDialog(wx.Dialog):
+    def __init__(self, parent, title, current_vin=""):
+        super(VINDialog, self).__init__(parent, title=title, size=(400, 150))
+        panel = wx.Panel(self)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        button_sizer = wx.BoxSizer(wx.HORIZONTAL)
+
+        if current_vin:
+            sizer.Add(
+                wx.StaticText(panel, label=f"Current VIN: {current_vin}"),
+                flag=wx.ALL,
+                border=5,
+            )
+
+        sizer.Add(wx.StaticText(panel, label="New VIN (17 characters):"), flag=wx.LEFT | wx.TOP, border=5)
+        self.vin_input = wx.TextCtrl(panel, value="", style=wx.TE_PROCESS_ENTER)
+        self.vin_input.SetMaxLength(17)
+        sizer.Add(self.vin_input, flag=wx.EXPAND | wx.LEFT | wx.RIGHT, border=5)
+
+        self.ok_btn = wx.Button(panel, wx.ID_OK, label="Write VIN")
+        self.cancel_btn = wx.Button(panel, wx.ID_CANCEL, label="Cancel")
+        button_sizer.Add(self.ok_btn)
+        button_sizer.Add(self.cancel_btn, flag=wx.LEFT, border=5)
+        sizer.Add(button_sizer, flag=wx.ALIGN_CENTER | wx.TOP | wx.BOTTOM, border=10)
+
+        panel.SetSizer(sizer)
+        self.ok_btn.Bind(wx.EVT_BUTTON, self.on_button)
+        self.cancel_btn.Bind(wx.EVT_BUTTON, self.on_button)
+        self.vin_input.Bind(wx.EVT_TEXT_ENTER, self.on_button)
+
+    def on_button(self, event):
+        if self.IsModal():
+            if event.EventObject.Id == wx.ID_OK or event.GetEventType() == wx.wxEVT_TEXT_ENTER:
+                vin = self.vin_input.GetValue().strip().upper()
+                if len(vin) != 17:
+                    wx.MessageBox("VIN must be exactly 17 characters.", "Invalid VIN", wx.OK | wx.ICON_WARNING)
+                    return
+                self.vin_value = vin
+                self.EndModal(wx.ID_OK)
+            else:
+                self.EndModal(wx.ID_CANCEL)
+        else:
+            self.Close()
+
+
 class FlashPanel(wx.Panel):
     input_blocks: dict[str, constants.BlockData]
 
@@ -240,6 +308,7 @@ class FlashPanel(wx.Panel):
                 "logger": path.join(currentPath, "logs"),
                 "interface": "",
                 "singlecsv": False,
+                "scanble": False,
                 "logmode": "22",
                 "activitylevel": "INFO",
             }
@@ -321,9 +390,13 @@ class FlashPanel(wx.Panel):
         get_info_button = wx.Button(self, label="Get Ecu Info")
         get_info_button.Bind(wx.EVT_BUTTON, self.on_get_info)
 
+        vin_button = wx.Button(self, label="Write VIN")
+        vin_button.Bind(wx.EVT_BUTTON, self.on_write_vin)
+
         actions_sizer.Add(self.module_choice, 0, wx.LEFT, 5)
         actions_sizer.Add(get_info_button, 0, wx.LEFT | wx.RIGHT, 5)
         actions_sizer.Add(dtc_button, 0, wx.RIGHT, 5)
+        actions_sizer.Add(vin_button, 0, wx.RIGHT, 5)
 
         selections_sizer.Add(self.action_choice, 0, wx.EXPAND | wx.ALL, 5)
         selections_sizer.Add(flash_button, 0, wx.EXPAND | wx.ALL, 5)
@@ -386,6 +459,68 @@ class FlashPanel(wx.Panel):
             self.feedback_text.AppendText(str(dtc) + " : " + dtcs[dtc] + "\n")
             for dtc in dtcs
         ]
+
+    def on_write_vin(self, event):
+        (interface, interface_path) = split_interface_name(self.options["interface"])
+
+        # First read current VIN
+        self.feedback_text.AppendText("Reading current VIN...\n")
+        try:
+            ecu_info = flash_uds.read_ecu_data(
+                self.flash_info,
+                interface=interface,
+                callback=self.update_callback,
+                interface_path=interface_path,
+            )
+            current_vin = ecu_info.get("VIN", "")
+        except Exception as e:
+            current_vin = ""
+            self.feedback_text.AppendText(f"Could not read current VIN: {e}\n")
+
+        dlg = VINDialog(self, "Write VIN", current_vin)
+        result = dlg.ShowModal()
+        if result != wx.ID_OK:
+            dlg.Destroy()
+            return
+
+        new_vin = dlg.vin_value
+        dlg.Destroy()
+
+        confirm = wx.MessageDialog(
+            self,
+            f"Current VIN: {current_vin or '(unknown)'}\nNew VIN: {new_vin}\n\nAre you sure?",
+            "Confirm VIN Change",
+            wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING,
+        ).ShowModal()
+
+        if confirm != wx.ID_YES:
+            self.feedback_text.AppendText("VIN write cancelled.\n")
+            return
+
+        self.feedback_text.AppendText(f"Writing VIN: {new_vin}...\n")
+
+        def write_vin_thread():
+            try:
+                result = flash_uds.write_vin(
+                    self.flash_info,
+                    new_vin,
+                    interface=interface,
+                    callback=self.update_callback,
+                    interface_path=interface_path,
+                )
+                wx.CallAfter(
+                    self.feedback_text.AppendText,
+                    f"VIN write {'successful' if result['success'] else 'FAILED'}: {result['old_vin']} → {result['new_vin']}\n",
+                )
+            except Exception as e:
+                wx.CallAfter(
+                    self.feedback_text.AppendText,
+                    f"VIN write failed: {e}\n",
+                )
+
+        t = threading.Thread(target=write_vin_thread)
+        t.daemon = True
+        t.start()
 
     def flash_unlock(self, selected_file):
         if (
@@ -842,6 +977,18 @@ class VW_Flash_Frame(wx.Frame):
             source=select_interface_menu_item,
         )
 
+        scan_ble_menu_item = interface_menu.AppendCheckItem(
+            wx.ID_ANY, "Scan for BLE devices", "Enable/disable scanning for BLE devices"
+        )
+
+        scan_ble_menu_item.Check(self.panel.options.get("scanble", False))
+
+        self.Bind(
+            event=wx.EVT_MENU,
+            handler=self.on_select_scanble,
+            source=scan_ble_menu_item,
+        )
+
         set_stmin_menu_item = interface_menu.Append(
             wx.ID_ANY,
             "Change STMIN_TX...",
@@ -910,6 +1057,10 @@ class VW_Flash_Frame(wx.Frame):
 
     def on_select_logging_mode(self, event, mode):
         self.panel.options["logmode"] = mode
+        write_config(self.panel.options)
+
+    def on_select_scanble(self, event):
+        self.panel.options["scanble"] = event.IsChecked()
         write_config(self.panel.options)
 
     def on_select_unlock(self, event):
@@ -1000,6 +1151,26 @@ class VW_Flash_Frame(wx.Frame):
             self.hsl_logger.stop()
             self.hsl_logger = None
 
+    def ble_scan_callback(self, interfaces, progress_dialog):
+        progress_dialog.Update(100)
+        self.panel.interfaces += interfaces
+        dialog_interfaces = []
+        self.panel.interfaces = list(
+            filter(lambda interface: interface[0] is not None, self.panel.interfaces)
+        )
+        for interface in self.panel.interfaces:
+            dialog_interfaces.append(interface[0])
+        dlg = wx.SingleChoiceDialog(
+            self, "Select an Interface", "Select an interface", dialog_interfaces
+        )
+        if dlg.ShowModal() == wx.ID_OK:
+            self.panel.options["interface"] = self.panel.interfaces[dlg.GetSelection()][
+                1
+            ]
+            write_config(self.panel.options)
+            logger.info("User selected: " + self.panel.options["interface"])
+        dlg.Destroy()
+
     def on_select_interface(self, event):
         progress_dialog = wx.ProgressDialog(
             "Scanning for devices...",
@@ -1008,29 +1179,17 @@ class VW_Flash_Frame(wx.Frame):
             parent=self,
             style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE,
         )
-
         progress_dialog.Show()
         self.panel.interfaces = poll_interfaces()
-        progress_dialog.Update(100)
+        progress_dialog.Update(50, "Scanning for BLE devices...")
 
-        dialog_interfaces = []
-        self.panel.interfaces = list(
-            filter(lambda interface: interface[0] is not None, self.panel.interfaces)
-        )
-        for interface in self.panel.interfaces:
-            dialog_interfaces.append(interface[0])
+        def scan_finished(interfaces):
+            wx.CallAfter(self.ble_scan_callback, interfaces, progress_dialog)
 
-        dlg = wx.SingleChoiceDialog(
-            self, "Select an Interface", "Select an interface", dialog_interfaces
-        )
-
-        if dlg.ShowModal() == wx.ID_OK:
-            self.panel.options["interface"] = self.panel.interfaces[dlg.GetSelection()][
-                1
-            ]
-            write_config(self.panel.options)
-            logger.info("User selected: " + self.panel.options["interface"])
-        dlg.Destroy()
+        if self.panel.options.get("scanble", False):
+            scan_for_ble_devices(scan_finished)
+        else:
+            scan_finished([])
 
     def try_extract_frf(self, frf_data: bytes):
         flash_infos = [

@@ -7,3 +7,4 @@ wxpython
 python-can
 pyyaml
 pyserial
+bleak

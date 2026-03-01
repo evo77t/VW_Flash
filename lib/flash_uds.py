@@ -738,3 +738,152 @@ def read_ecu_data(
             )
 
         return ecuInfo
+
+
+def write_vin(
+    flash_info: constants.FlashInfo,
+    new_vin: str,
+    interface="CAN",
+    callback=None,
+    interface_path=None,
+):
+    """Write a new VIN to the ECU via UDS WriteDataByIdentifier (0x2E, DID 0xF190).
+
+    Requires Programming Session + Security Access Level 17.
+    """
+    if len(new_vin) != 17:
+        raise ValueError(f"VIN must be exactly 17 characters, got {len(new_vin)}")
+
+    class GenericStringCodec(udsoncan.DidCodec):
+        def encode(self, val):
+            return bytes(val)
+
+        def decode(self, payload):
+            return str(payload, "ascii")
+
+        def __len__(self):
+            raise udsoncan.DidCodec.ReadAllRemainingData
+
+    class GenericBytesCodec(udsoncan.DidCodec):
+        def encode(self, val):
+            return bytes(val)
+
+        def decode(self, payload):
+            return payload.hex()
+
+        def __len__(self):
+            raise udsoncan.DidCodec.ReadAllRemainingData
+
+    conn = connection_setup(
+        interface=interface,
+        rxid=flash_info.control_module_identifier.rxid,
+        txid=flash_info.control_module_identifier.txid,
+        interface_path=interface_path,
+    )
+
+    with Client(
+        conn, request_timeout=5, config=configs.default_client_config
+    ) as client:
+        try:
+            def volkswagen_security_algo(level: int, seed: bytes, params=None) -> bytes:
+                vs = Sa2SeedKey(flash_info.sa2_script, int.from_bytes(seed, "big"))
+                return vs.execute().to_bytes(4, "big")
+
+            client.config["security_algo"] = volkswagen_security_algo
+
+            client.config["data_identifiers"] = {}
+            for data_record in constants.data_records:
+                if data_record.parse_type == 0:
+                    client.config["data_identifiers"][data_record.address] = GenericStringCodec
+                else:
+                    client.config["data_identifiers"][data_record.address] = GenericBytesCodec
+            client.config["data_identifiers"][0xF190] = GenericBytesCodec
+
+            if callback:
+                callback(flasher_step="SETUP", flasher_status="Connecting...", flasher_progress=0)
+
+            # Read current VIN in extended session
+            detailedLogger.info("Opening extended diagnostic session...")
+            client.change_session(
+                services.DiagnosticSessionControl.Session.extendedDiagnosticSession
+            )
+
+            client.session_timing["p2_server_max"] = 30
+            client.config["request_timeout"] = 30
+
+            vin_did = constants.data_records[0]
+            current_vin = read_data_or_empty(client, vin_did.address)
+            detailedLogger.info(f"Current VIN: {current_vin}")
+
+            if callback:
+                callback(
+                    flasher_step="SETUP",
+                    flasher_status=f"Current VIN: {current_vin} → New VIN: {new_vin}",
+                    flasher_progress=20,
+                )
+
+            # Upgrade to programming session
+            detailedLogger.info("Upgrading to programming session...")
+            client.change_session(
+                services.DiagnosticSessionControl.Session.programmingSession
+            )
+
+            client.session_timing["p2_server_max"] = 30
+            client.config["request_timeout"] = 30
+            client.tester_present()
+
+            # Security access
+            if callback:
+                callback(flasher_step="SETUP", flasher_status="Security Access...", flasher_progress=50)
+
+            detailedLogger.info("Performing Seed/Key authentication...")
+            client.unlock_security_access(17)
+            client.tester_present()
+
+            # Write VIN
+            if callback:
+                callback(flasher_step="WRITING", flasher_status=f"Writing VIN: {new_vin}", flasher_progress=80)
+
+            detailedLogger.info(f"Writing VIN 0xF190: {new_vin}")
+            client.write_data_by_identifier(0xF190, new_vin.encode("ascii"))
+
+            client.tester_present()
+
+            # Verify by reading back
+            client.change_session(
+                services.DiagnosticSessionControl.Session.extendedDiagnosticSession
+            )
+            verify_vin = read_data_or_empty(client, vin_did.address)
+            detailedLogger.info(f"Readback VIN: {verify_vin}")
+
+            success = verify_vin == new_vin
+
+            if callback:
+                callback(
+                    flasher_step="DONE",
+                    flasher_status=f"VIN {'written successfully' if success else 'VERIFY FAILED'}: {verify_vin}",
+                    flasher_progress=100,
+                )
+
+            # Reboot
+            detailedLogger.info("Rebooting ECU...")
+            try:
+                client.ecu_reset(services.ECUReset.ResetType.hardReset)
+            except Exception:
+                pass
+
+            return {"old_vin": current_vin, "new_vin": verify_vin, "success": success}
+
+        except exceptions.NegativeResponseException as e:
+            msg = 'Server refused service %s with code "%s" (0x%02x)' % (
+                e.response.service.get_name(), e.response.code_name, e.response.code
+            )
+            logger.error(msg)
+            if callback:
+                callback(flasher_step="ERROR", flasher_status=msg, flasher_progress=0)
+            raise
+        except exceptions.TimeoutException as e:
+            logger.error("Service request timed out! : %s" % repr(e))
+            if callback:
+                callback(flasher_step="ERROR", flasher_status="Timeout", flasher_progress=0)
+            raise

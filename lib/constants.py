@@ -236,6 +236,8 @@ j2534DLL = (
     "C:/Program Files (x86)/OpenECU/OpenPort 2.0/drivers/openport 2.0/op20pt32.dll"
 )
 
+BLE_SERVICE_IDENTIFIER = "0000abf0-0000-1000-8000-00805f9b34fb"
+
 
 # test data for the FakeConnection
 
