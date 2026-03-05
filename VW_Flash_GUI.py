@@ -528,7 +528,7 @@ class FlashPanel(wx.Panel):
             self.feedback_text.AppendText("VIN write cancelled.\n")
             return
 
-        self.feedback_text.AppendText(f"Writing VIN: {new_vin}...\n")
+        self.feedback_text.AppendText(f"Writing VIN: {new_vin} (Extended Session + SA2 Level 0x11)...\n")
 
         def write_vin_thread():
             try:

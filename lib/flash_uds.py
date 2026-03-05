@@ -770,7 +770,13 @@ def write_vin(
 ):
     """Write a new VIN to the ECU via UDS WriteDataByIdentifier (0x2E, DID 0xF190).
 
-    Requires Programming Session + Security Access Level 17.
+    Requires Extended Diagnostic Session + Security Access Level 17 (0x11).
+
+    The VIN DID is read-only in CBOOT (programming session). VIN writes are
+    handled by the ASW in extended session via a 3-stage state machine:
+      State 0: ASW copies VIN to NVM write buffer, sets request flag, returns 0x78
+      State 1: NVM/Fee task writes to DFlash, returns 0x78 (ResponsePending)
+      State 2: Write complete, ASW returns positive response
     """
     if len(new_vin) != 17:
         raise ValueError(f"VIN must be exactly 17 characters, got {len(new_vin)}")
@@ -843,25 +849,20 @@ def write_vin(
                     flasher_progress=20,
                 )
 
-            # Upgrade to programming session
-            detailedLogger.info("Upgrading to programming session...")
-            client.change_session(
-                services.DiagnosticSessionControl.Session.programmingSession
-            )
+            # Stay in extended session — VIN is read-only in CBOOT (programming session).
+            # The ASW handles VIN writes in extended session with SecurityAccess 0x11.
+            detailedLogger.info("Staying in extended session for VIN write (ASW handler)...")
 
-            client.session_timing["p2_server_max"] = 30
-            client.config["request_timeout"] = 30
-            client.tester_present()
-
-            # Security access
+            # Security access level 0x11 (17) — VW ECU Configuration level
             if callback:
                 callback(flasher_step="SETUP", flasher_status="Security Access...", flasher_progress=50)
 
-            detailedLogger.info("Performing Seed/Key authentication...")
+            detailedLogger.info("Performing Seed/Key authentication (level 0x11)...")
             client.unlock_security_access(17)
             client.tester_present()
 
-            # Write VIN
+            # Write VIN — ASW state machine returns 0x78 (ResponsePending)
+            # while NVM/Fee task commits to DFlash, then positive response
             if callback:
                 callback(flasher_step="WRITING", flasher_status=f"Writing VIN: {new_vin}", flasher_progress=80)
 
