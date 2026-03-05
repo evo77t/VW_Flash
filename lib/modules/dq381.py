@@ -67,3 +67,8 @@ dsg_flash_info = FlashInfo(
     None,
     None,
 )
+
+# DQ381 CBOOT splits block erase into 2 phases internally (SH-2A firmware
+# at 0x80013470 divides CBOOT into halves). The ECU returns NRC between
+# phases, so the erase routine must be retried.
+dsg_flash_info.erase_retries = 5

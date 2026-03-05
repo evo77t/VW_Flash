@@ -360,7 +360,7 @@ class FlashPanel(wx.Panel):
             "Simos 18.1/6",
             "Simos 18.10",
             "DQ250-MQB DSG",
-            "DQ381 DSG (CAL ONLY)",
+            "DQ381 DSG",
             "DQ400-MQB DSG",
             "DQ500-0BH DSG",
             "DQ500-0DL DSG",

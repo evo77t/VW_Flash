@@ -88,7 +88,28 @@ def flash_block(
         detailedLogger.info(
             "Erasing block " + str(block_number) + ", routine 0xFF00..."
         )
-        client.start_routine(Routine.EraseMemory, data=bytes([0x1, block_identifier]))
+        erase_data = bytes([0x1, block_identifier])
+        erase_retries = getattr(flash_info, 'erase_retries', 0)
+        if erase_retries > 0:
+            # DQ381/DQ500 CBOOT splits erase into multiple phases internally.
+            # The ECU returns NRC between phases, so we must retry the erase
+            # routine until it succeeds.
+            for attempt in range(erase_retries + 1):
+                try:
+                    client.start_routine(Routine.EraseMemory, data=erase_data)
+                    break
+                except exceptions.NegativeResponseException as e:
+                    if attempt < erase_retries:
+                        detailedLogger.info(
+                            "Erase block " + str(block_number)
+                            + " returned NRC 0x%02x, retry %d/%d..."
+                            % (e.response.code, attempt + 1, erase_retries)
+                        )
+                        time.sleep(1)
+                    else:
+                        raise
+        else:
+            client.start_routine(Routine.EraseMemory, data=erase_data)
 
     if callback:
         callback(

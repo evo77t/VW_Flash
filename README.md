@@ -2,11 +2,19 @@
 
 VW Flashing Tools over ISO-TP / UDS
 
-Currently supports full custom reflashing of the Continental/Siemens Simos18.1/6, and Simos18.10 control units as used in MQB VW AG vehicles, as well as the Temic DQ250-MQB, Bosch DQ381-MQB DSG, and Gen 5 Haldex4Motion control units over UDS.
+Currently supports full custom reflashing of the Continental/Siemens Simos18.1/6, and Simos18.10 control units as used in MQB VW AG vehicles, as well as the Temic DQ250-MQB, Bosch DQ381-MQB DSG, DQ400-MQB DSG, DQ500-0BH DSG, DQ500-0DL DSG, and Gen 5 Haldex4Motion control units over UDS.
 
 RSA-bypass/"unlock" patches are provided for Simos 18.1/6 (SC8 project identifier) and Simos18.10 (SCG project identifier). 
 
 Additionally supports reflashing of several other Simos ECUs provided that RSA validation (if present) has already been disabled.
+
+# Changes to original VW_Flash
+
+- **DQ381 full flash support**: Reverse engineered the Renesas SH-2A CBOOT firmware to identify and fix the "CAL ONLY" limitation. The ECU's 2-phase block erase now completes reliably via erase retries.
+- **DQ500-0DL support**: Added AES-128-CBC decryption/encryption module for RS3/TTRS/RSQ3 DSG transmissions. Keys extracted from CBOOT bench dump.
+- **DQ500-0BH support**: Added unencrypted/uncompressed flash support for Tiguan/Passat/Q3 DSG.
+- **DQ400-MQB support**: Added rolling substitution cipher decryption with key table extracted from CBOOT via Ghidra.
+- **extractodx.py**: Fixed decompression for unencrypted DSG containers (compressionType='0' check before LZSS10 fallback).
 
 # Use Information and Documentation
 
@@ -52,11 +60,54 @@ Pull Requests are welcome and appreciated. I will review them as I have time. Co
 
 [sa2-seed-key](https://github.com/bri3d/sa2_seed_key) provides an implementation of the "SA2" Programming Session Seed/Key algorithm for VW Auto Group vehicles. The SA2 script can be found in the ODX flash container for the vehicle. The bytecode from the SA2 script is executed against the Security Access Seed to generate the Security Access Key. This script has been tested against a range of SA2 bytecodes and should be quite robust.
 
-[extractodx.py](extractodx.py) extracts a factory Simos12/Simos18.1/Simos18.10 ODX container to decompressed, decrypted blocks suitable for modification and re-flashing. It supports the "AUDI AES" (0xA) encryption and "AUDI LZSS" (0xA) compression used in Simos ECUs, and the DQ250-MQB encryption scheme used in MQB DSGs. Other ECUs use different flash container mechanisms within ODX files.
+[extractodx.py](extractodx.py) extracts a factory Simos12/Simos18.1/Simos18.10 ODX container to decompressed, decrypted blocks suitable for modification and re-flashing. It supports the "AUDI AES" (0xA) encryption and "AUDI LZSS" (0xA) compression used in Simos ECUs, the DQ250-MQB/DQ400-MQB rolling substitution cipher, DQ500-0DL AES-128-CBC encryption, and unencrypted DQ500-0BH containers. Other ECUs use different flash container mechanisms within ODX files.
 
 [frf](frf) provides an FRF flash container extractor. This should work to extract an ODX from any and all FRF flash containers as the format has not changed since it was introduced.
 
 [a2l2xdf](https://github.com/bri3d/a2l2xdf) provides a method to extract specific definitions from A2L files and convert them to TunerPro XDF files. This is useful to 'cut down' an A2L file into something that's useful for tuning, and get it into a free tuning-focused UI. The `a2l2xdf.csv` in this directory provides a good "getting started" list of data to edit to prepare a basic Simos18.1 tune, as well.
 
 The `lib/lzss` directory contains an implementation of LZSS modified to use the correction dictionary size and window length for Simos18 ECUs. Thanks to `tinytuning` for this.
+
+# DSG Transmission Support
+
+## Supported DSG ECUs
+
+| ECU | Encryption | Compression | Full Flash | Notes |
+|-----|-----------|-------------|------------|-------|
+| DQ250-MQB | Rolling substitution cipher | LZSS10 | Yes | 256-byte key table |
+| DQ381-MQB | AES-128-CBC | LZSS10 | Yes | Renesas SH-2A CBOOT |
+| DQ400-MQB | Rolling substitution cipher | LZSS10 | Yes | Different key table than DQ250 |
+| DQ500-0BH | None | None | Yes | Unencrypted, uncompressed |
+| DQ500-0DL | AES-128-CBC | LZSS10 | Yes | RS3/TTRS/RSQ3 |
+
+## DQ381/DQ500-0DL CBOOT Architecture (Renesas SH-2A)
+
+The DQ381 and DQ500-0DL ECUs use a **Renesas SH-2A** processor (Big Endian), not TriCore like Simos ECUs. The CBOOT firmware was reverse engineered to understand and fix the "CAL ONLY" flash limitation reported in [Issue #135](https://github.com/bri3d/VW_Flash/issues/135).
+
+### Root Cause: 2-Phase Block Erase
+
+The CBOOT splits the erase of blocks 1 (CBOOT) and 2 (ASW) into two half-block phases internally (`flash_erase_cboot_split` at 0x80013470). Between phases, the ECU returns a negative response code (NRC), which VW_Flash previously interpreted as a fatal error.
+
+**Block erase dispatch (0x80013992):**
+
+| Block | Method | Details |
+|-------|--------|---------|
+| 1 (CBOOT) | `flash_erase_single_block` | Split into 2 halves, async busy flags |
+| 2 (ASW) | `flash_erase_with_prefix` | 0x7F prefix byte, similar 2-phase |
+| 3 (CAL) | Function pointer (direct) | Single-phase, no split — always worked |
+| 4-6 | Erase-only variants | Used for erase without data transfer |
+
+**Fix:** The erase routine in `flash_uds.py` now retries on NRC responses when `flash_info.erase_retries` is set (default 5 for DQ381/DQ500-0DL), allowing the multi-phase erase to complete across retries.
+
+### Key CBOOT Functions (Ghidra SH-2A analysis)
+
+| Address | Name | Purpose |
+|---------|------|---------|
+| 0x80013914 | `uds_service_dispatcher` | Routes UDS service requests |
+| 0x80013992 | `block_dispatcher` | Block number switch (1-6) |
+| 0x80013470 | `flash_erase_cboot_split` | Splits block into 2 halves for erase |
+| 0x80013278 | `flash_erase_single_block` | Single block erase via descriptor table |
+| 0x800132b2 | `flash_erase_with_prefix` | Block erase with 0x7F prefix |
+| 0x8001382e | `uds_erase_validate_completion` | Polls 2-phase erase completion |
+| 0x8001351c | `flash_block_dispatch` | Full block handler with switch(1-11) |
 

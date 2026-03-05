@@ -73,3 +73,6 @@ dsg_flash_info = FlashInfo(
     None,
     None,
 )
+
+# Same SH-2A CBOOT as DQ381 — 2-phase erase requires retries
+dsg_flash_info.erase_retries = 5
