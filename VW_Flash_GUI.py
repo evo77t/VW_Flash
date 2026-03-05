@@ -33,6 +33,8 @@ from lib.modules import (
     simos184,
     dq250mqb,
     dq381,
+    dq400mqb,
+    dq500mqb,
     simos16,
     haldex4motion,
 )
@@ -98,8 +100,25 @@ def module_selection_is_dq381(selection_index):
     return selection_index == 3
 
 
+def module_selection_is_dq400(selection_index):
+    return selection_index == 4
+
+
+def module_selection_is_dq500(selection_index):
+    return selection_index == 5
+
+
 def module_selection_is_haldex(selected_index):
-    return selected_index == 4
+    return selected_index == 6
+
+
+def module_selection_is_dsg(selection_index):
+    return (
+        module_selection_is_dq250(selection_index)
+        or module_selection_is_dq381(selection_index)
+        or module_selection_is_dq400(selection_index)
+        or module_selection_is_dq500(selection_index)
+    )
 
 
 def split_interface_name(interface_string: str):
@@ -336,6 +355,8 @@ class FlashPanel(wx.Panel):
             "Simos 18.10",
             "DQ250-MQB DSG",
             "DQ381 DSG (CAL ONLY)",
+            "DQ400-MQB DSG",
+            "DQ500-MQB DSG",
             "Haldex (4motion) UNTESTED",
         ]
         self.module_choice = wx.Choice(self, choices=available_modules)
@@ -426,6 +447,8 @@ class FlashPanel(wx.Panel):
             simos1810.s1810_flash_info,
             dq250mqb.dsg_flash_info,
             dq381.dsg_flash_info,
+            dq400mqb.dsg_flash_info,
+            dq500mqb.dsg_flash_info,
             haldex4motion.haldex_flash_info,
         ][module_number]
         if self.flash_info == haldex4motion.haldex_flash_info:
@@ -524,8 +547,7 @@ class FlashPanel(wx.Panel):
 
     def flash_unlock(self, selected_file):
         if (
-            module_selection_is_dq250(self.module_choice.GetSelection())
-            or module_selection_is_dq381(self.module_choice.GetSelection())
+            module_selection_is_dsg(self.module_choice.GetSelection())
             or module_selection_is_haldex(self.module_choice.GetSelection())
         ):
             self.feedback_text.AppendText(
@@ -542,7 +564,7 @@ class FlashPanel(wx.Panel):
             ) = extract_flash.extract_flash_from_frf(
                 input_bytes,
                 self.flash_info,
-                is_dsg=module_selection_is_dq250(self.module_choice.GetSelection()),
+                is_dsg=module_selection_is_dsg(self.module_choice.GetSelection()),
             )
             self.input_blocks = {}
             for i in self.flash_info.block_names_frf.keys():
@@ -594,7 +616,7 @@ class FlashPanel(wx.Panel):
             ) = extract_flash.extract_flash_from_frf(
                 input_bytes,
                 self.flash_info,
-                is_dsg=module_selection_is_dq250(self.module_choice.GetSelection()),
+                is_dsg=module_selection_is_dsg(self.module_choice.GetSelection()),
             )
             self.input_blocks = {}
             for i in self.flash_info.block_names_frf.keys():
@@ -642,7 +664,8 @@ class FlashPanel(wx.Panel):
             self.feedback_text.AppendText(
                 "Extracting Calibration from full binary...\n"
             )
-            if module_selection_is_dq250(self.module_choice.GetSelection()):
+            has_driver = module_selection_is_dq250(self.module_choice.GetSelection()) or module_selection_is_dq400(self.module_choice.GetSelection())
+            if has_driver:
                 self.feedback_text.AppendText("Extracting Driver from full binary...\n")
             input_blocks = self.binfile_handler.blocks_from_bin(
                 self.row_obj_dict[selected_file]
@@ -653,12 +676,12 @@ class FlashPanel(wx.Panel):
                 for k, v in input_blocks.items()
                 if (v.block_number == self.flash_info.block_name_to_number["CAL"])
                 or (
-                    module_selection_is_dq250(self.module_choice.GetSelection())
+                    has_driver
                     and v.block_number == self.flash_info.block_name_to_number["DRIVER"]
                 )
             }
         else:
-            if module_selection_is_dq250(self.module_choice.GetSelection()):
+            if module_selection_is_dq250(self.module_choice.GetSelection()) or module_selection_is_dq400(self.module_choice.GetSelection()):
                 # Populate DSG Driver block from a fixed file name if it's a CAL only bin
                 dsg_driver_path = path.join(self.options["cal"], "FD_2.DRIVER.bin")
                 self.feedback_text.AppendText(
@@ -787,7 +810,7 @@ class FlashPanel(wx.Panel):
     def prepare_file(self, selected_file, output_dir):
         should_patch_cboot = False
 
-        if module_selection_is_dq250(self.module_choice.GetSelection()):
+        if module_selection_is_dq250(self.module_choice.GetSelection()) or module_selection_is_dq400(self.module_choice.GetSelection()) or module_selection_is_dq500(self.module_choice.GetSelection()):
             flash_utils = dsg_flash_utils
         elif module_selection_is_dq381(self.module_choice.GetSelection()):
             flash_utils = dq381_flash_utils
@@ -830,7 +853,7 @@ class FlashPanel(wx.Panel):
 
     def flash_bin(self, get_info=True, should_patch_cboot=False):
         (interface, interface_path) = split_interface_name(self.options["interface"])
-        if module_selection_is_dq250(self.module_choice.GetSelection()):
+        if module_selection_is_dq250(self.module_choice.GetSelection()) or module_selection_is_dq400(self.module_choice.GetSelection()) or module_selection_is_dq500(self.module_choice.GetSelection()):
             flash_utils = dsg_flash_utils
         elif module_selection_is_dq381(self.module_choice.GetSelection()):
             flash_utils = dq381_flash_utils
@@ -879,8 +902,7 @@ class FlashPanel(wx.Panel):
             if (
                 ecu_info is not None
                 and (
-                    module_selection_is_dq250(self.module_choice.GetSelection())
-                    or module_selection_is_dq381(self.module_choice.GetSelection())
+                    module_selection_is_dsg(self.module_choice.GetSelection())
                     or module_selection_is_haldex(self.module_choice.GetSelection())
                 )
                 is not True
@@ -1197,6 +1219,8 @@ class VW_Flash_Frame(wx.Frame):
             simos1810.s1810_flash_info,
             dq250mqb.dsg_flash_info,
             dq381.dsg_flash_info,
+            dq400mqb.dsg_flash_info,
+            dq500mqb.dsg_flash_info,
             haldex4motion.haldex_flash_info,
             simos184.s1841_flash_info,
             simos16.s16_flash_info,
@@ -1205,12 +1229,13 @@ class VW_Flash_Frame(wx.Frame):
             simos10.s10_flash_info,
             simos8.s8_flash_info,
         ]
+        dsg_flash_infos = {dq250mqb.dsg_flash_info, dq381.dsg_flash_info, dq400mqb.dsg_flash_info, dq500mqb.dsg_flash_info}
         for flash_info in flash_infos:
             try:
                 (flash_data, allowed_boxcodes) = extract_flash.extract_flash_from_frf(
                     frf_data,
                     flash_info,
-                    is_dsg=(flash_info is dq250mqb.dsg_flash_info),
+                    is_dsg=(flash_info in dsg_flash_infos),
                 )
                 output_blocks = {}
                 for i in flash_info.block_names_frf.keys():

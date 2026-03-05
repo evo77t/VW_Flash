@@ -32,6 +32,8 @@ from lib.modules import (
     simos184,
     dq250mqb,
     dq381,
+    dq400mqb,
+    dq500mqb,
     simos16,
     haldex4motion,
 )
@@ -115,6 +117,8 @@ parser.add_argument(
 
 parser.add_argument("--dsg", help="Perform MQB-DQ250 DSG actions.", action="store_true")
 parser.add_argument("--dq381", help="Perform DQ381 flash actions.", action="store_true")
+parser.add_argument("--dq400", help="Perform DQ400 DSG actions.", action="store_true")
+parser.add_argument("--dq500", help="Perform DQ500 DSG actions.", action="store_true")
 parser.add_argument(
     "--unsafe_haldex",
     help="Perform Haldex actions, unsafe to flash modified files!",
@@ -216,9 +220,15 @@ if args.haldex:
 if args.dq381:
     flash_info = dq381.dsg_flash_info
 
+if args.dq400:
+    flash_info = dq400mqb.dsg_flash_info
+
+if args.dq500:
+    flash_info = dq500mqb.dsg_flash_info
+
 flash_utils = simos_flash_utils
 
-if args.dsg:
+if args.dsg or args.dq400 or args.dq500:
     flash_utils = dsg_flash_utils
 
 if args.dq381:
@@ -261,8 +271,17 @@ if args.interface == "USBISOTP":
 
 def input_blocks_from_frf(frf_path: str) -> dict[str, BlockData]:
     frf_data = Path(frf_path).read_bytes()
+    is_dsg = args.dsg or args.dq381 or args.dq400 or args.dq500
+    # Handle ZIP-wrapped FRFs
+    import io, zipfile
+    if frf_data[:2] == b'PK':
+        zf = zipfile.ZipFile(io.BytesIO(frf_data), 'r')
+        for fi in zf.infolist():
+            with zf.open(fi) as f:
+                frf_data = f.read()
+                break
     (flash_data, allowed_boxcodes) = extract_flash_from_frf(
-        frf_data, flash_info, is_dsg=args.dsg
+        frf_data, flash_info, is_dsg=is_dsg
     )
     input_blocks = {}
     for i in flash_info.block_names_frf.keys():
