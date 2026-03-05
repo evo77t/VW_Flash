@@ -34,7 +34,8 @@ from lib.modules import (
     dq250mqb,
     dq381,
     dq400mqb,
-    dq500mqb,
+    dq500_0bh,
+    dq500_0dl,
     simos16,
     haldex4motion,
 )
@@ -108,8 +109,12 @@ def module_selection_is_dq500(selection_index):
     return selection_index == 5
 
 
+def module_selection_is_dq500_0dl(selection_index):
+    return selection_index == 6
+
+
 def module_selection_is_haldex(selected_index):
-    return selected_index == 6
+    return selected_index == 7
 
 
 def module_selection_is_dsg(selection_index):
@@ -118,6 +123,7 @@ def module_selection_is_dsg(selection_index):
         or module_selection_is_dq381(selection_index)
         or module_selection_is_dq400(selection_index)
         or module_selection_is_dq500(selection_index)
+        or module_selection_is_dq500_0dl(selection_index)
     )
 
 
@@ -356,7 +362,8 @@ class FlashPanel(wx.Panel):
             "DQ250-MQB DSG",
             "DQ381 DSG (CAL ONLY)",
             "DQ400-MQB DSG",
-            "DQ500-MQB DSG",
+            "DQ500-0BH DSG",
+            "DQ500-0DL DSG",
             "Haldex (4motion) UNTESTED",
         ]
         self.module_choice = wx.Choice(self, choices=available_modules)
@@ -448,7 +455,8 @@ class FlashPanel(wx.Panel):
             dq250mqb.dsg_flash_info,
             dq381.dsg_flash_info,
             dq400mqb.dsg_flash_info,
-            dq500mqb.dsg_flash_info,
+            dq500_0bh.dsg_flash_info,
+            dq500_0dl.dsg_flash_info,
             haldex4motion.haldex_flash_info,
         ][module_number]
         if self.flash_info == haldex4motion.haldex_flash_info:
@@ -810,7 +818,7 @@ class FlashPanel(wx.Panel):
     def prepare_file(self, selected_file, output_dir):
         should_patch_cboot = False
 
-        if module_selection_is_dq250(self.module_choice.GetSelection()) or module_selection_is_dq400(self.module_choice.GetSelection()) or module_selection_is_dq500(self.module_choice.GetSelection()):
+        if module_selection_is_dq250(self.module_choice.GetSelection()) or module_selection_is_dq400(self.module_choice.GetSelection()) or module_selection_is_dq500(self.module_choice.GetSelection()) or module_selection_is_dq500_0dl(self.module_choice.GetSelection()):
             flash_utils = dsg_flash_utils
         elif module_selection_is_dq381(self.module_choice.GetSelection()):
             flash_utils = dq381_flash_utils
@@ -853,7 +861,7 @@ class FlashPanel(wx.Panel):
 
     def flash_bin(self, get_info=True, should_patch_cboot=False):
         (interface, interface_path) = split_interface_name(self.options["interface"])
-        if module_selection_is_dq250(self.module_choice.GetSelection()) or module_selection_is_dq400(self.module_choice.GetSelection()) or module_selection_is_dq500(self.module_choice.GetSelection()):
+        if module_selection_is_dq250(self.module_choice.GetSelection()) or module_selection_is_dq400(self.module_choice.GetSelection()) or module_selection_is_dq500(self.module_choice.GetSelection()) or module_selection_is_dq500_0dl(self.module_choice.GetSelection()):
             flash_utils = dsg_flash_utils
         elif module_selection_is_dq381(self.module_choice.GetSelection()):
             flash_utils = dq381_flash_utils
@@ -1220,7 +1228,8 @@ class VW_Flash_Frame(wx.Frame):
             dq250mqb.dsg_flash_info,
             dq381.dsg_flash_info,
             dq400mqb.dsg_flash_info,
-            dq500mqb.dsg_flash_info,
+            dq500_0bh.dsg_flash_info,
+            dq500_0dl.dsg_flash_info,
             haldex4motion.haldex_flash_info,
             simos184.s1841_flash_info,
             simos16.s16_flash_info,
@@ -1229,7 +1238,7 @@ class VW_Flash_Frame(wx.Frame):
             simos10.s10_flash_info,
             simos8.s8_flash_info,
         ]
-        dsg_flash_infos = {dq250mqb.dsg_flash_info, dq381.dsg_flash_info, dq400mqb.dsg_flash_info, dq500mqb.dsg_flash_info}
+        dsg_flash_infos = {dq250mqb.dsg_flash_info, dq381.dsg_flash_info, dq400mqb.dsg_flash_info, dq500_0bh.dsg_flash_info, dq500_0dl.dsg_flash_info}
         for flash_info in flash_infos:
             try:
                 (flash_data, allowed_boxcodes) = extract_flash.extract_flash_from_frf(

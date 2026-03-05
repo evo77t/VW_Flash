@@ -33,7 +33,8 @@ from lib.modules import (
     dq250mqb,
     dq381,
     dq400mqb,
-    dq500mqb,
+    dq500_0bh,
+    dq500_0dl,
     simos16,
     haldex4motion,
 )
@@ -118,7 +119,8 @@ parser.add_argument(
 parser.add_argument("--dsg", help="Perform MQB-DQ250 DSG actions.", action="store_true")
 parser.add_argument("--dq381", help="Perform DQ381 flash actions.", action="store_true")
 parser.add_argument("--dq400", help="Perform DQ400 DSG actions.", action="store_true")
-parser.add_argument("--dq500", help="Perform DQ500 DSG actions.", action="store_true")
+parser.add_argument("--dq500", help="Perform DQ500-0BH DSG actions.", action="store_true")
+parser.add_argument("--dq500_0dl", help="Perform DQ500-0DL DSG actions.", action="store_true")
 parser.add_argument(
     "--unsafe_haldex",
     help="Perform Haldex actions, unsafe to flash modified files!",
@@ -224,11 +226,14 @@ if args.dq400:
     flash_info = dq400mqb.dsg_flash_info
 
 if args.dq500:
-    flash_info = dq500mqb.dsg_flash_info
+    flash_info = dq500_0bh.dsg_flash_info
+
+if args.dq500_0dl:
+    flash_info = dq500_0dl.dsg_flash_info
 
 flash_utils = simos_flash_utils
 
-if args.dsg or args.dq400 or args.dq500:
+if args.dsg or args.dq400 or args.dq500 or args.dq500_0dl:
     flash_utils = dsg_flash_utils
 
 if args.dq381:

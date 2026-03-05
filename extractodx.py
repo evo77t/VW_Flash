@@ -14,7 +14,8 @@ from lib.modules import (
     simos184,
     dq250mqb,
     dq400mqb,
-    dq500mqb,
+    dq500_0bh,
+    dq500_0dl,
     simos16,
     simos122,
     dq381,
@@ -115,10 +116,12 @@ def extract_odx(odx_string, flash_info: constants.FlashInfo, is_dsg=False):
 
         if compressionType == "0":
             decompressedContent = decryptedContent
-        elif compressionType == "A" or compressionType == "a" or is_dsg:
+        elif compressionType == "A" or compressionType == "a":
             decompressedContent = decompress_raw_lzss10(decryptedContent, length)
         elif compressionType == "1":
             decompressedContent = legacysimos.decompress(decryptedContent)
+        elif is_dsg:
+            decompressedContent = decompress_raw_lzss10(decryptedContent, length)
         else:
             decompressedContent = decryptedContent
 
@@ -204,7 +207,14 @@ if __name__ == "__main__":
         dest="dq500",
         action="store_true",
         default=False,
-        help="(optional) use DQ500 DSG (unencrypted)",
+        help="(optional) use DQ500-0BH DSG (unencrypted)",
+    )
+    parser.add_argument(
+        "--dq500-0dl",
+        dest="dq500_0dl",
+        action="store_true",
+        default=False,
+        help="(optional) use DQ500-0DL DSG (AES encrypted)",
     )
 
     parser.add_argument(
@@ -236,9 +246,11 @@ if __name__ == "__main__":
     if args.dq400:
         flash_info = dq400mqb.dsg_flash_info
     if args.dq500:
-        flash_info = dq500mqb.dsg_flash_info
+        flash_info = dq500_0bh.dsg_flash_info
+    if args.dq500_0dl:
+        flash_info = dq500_0dl.dsg_flash_info
 
-    is_dsg = args.dsg or args.dq381 or args.dq400 or args.dq500
+    is_dsg = args.dsg or args.dq381 or args.dq400 or args.dq500 or args.dq500_0dl
     file_data = Path(args.file).read_text()
 
     (data_blocks, allowed_boxcodes) = extract_odx(file_data, flash_info, is_dsg)
